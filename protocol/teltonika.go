@@ -67,6 +67,62 @@ func BuildLoginPacket(imei string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func ReadIMEI(r io.Reader) (string, error) {
+	lengthBuf := make([]byte, 2)
+	if _, err := io.ReadFull(r, lengthBuf); err != nil {
+		return "", err
+	}
+	imeiLen := binary.BigEndian.Uint16(lengthBuf)
+	if imeiLen == 0 || imeiLen > 32 {
+		return "", fmt.Errorf("invalid IMEI length: %d", imeiLen)
+	}
+	imeiBuf := make([]byte, imeiLen)
+	if _, err := io.ReadFull(r, imeiBuf); err != nil {
+		return "", err
+	}
+	return string(imeiBuf), nil
+}
+
+func SendIMEIResponse(conn net.Conn, ok bool) error {
+	ack := byte(0x00)
+	if ok {
+		ack = 0x01
+	}
+	_, err := conn.Write([]byte{ack})
+	return err
+}
+
+func Read8EPacket(r io.Reader) ([]byte, error) {
+	header := make([]byte, 6)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, err
+	}
+
+	payloadLen := binary.BigEndian.Uint32(header[2:6])
+	if payloadLen > 10*1024*1024 {
+		return nil, fmt.Errorf("8E packet too large: %d", payloadLen)
+	}
+
+	payload := make([]byte, payloadLen)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return nil, err
+	}
+
+	crcBuf := make([]byte, 4)
+	if _, err := io.ReadFull(r, crcBuf); err != nil {
+		return nil, err
+	}
+	crc := binary.BigEndian.Uint32(crcBuf)
+	if crc != crc32.ChecksumIEEE(payload) {
+		return nil, fmt.Errorf("crc mismatch: expected 0x%08X, got 0x%08X", crc32.ChecksumIEEE(payload), crc)
+	}
+	if len(payload) == 0 || payload[0] != Codec8E {
+		return nil, fmt.Errorf("unexpected codec byte: 0x%X", payload[0])
+	}
+
+	return payload, nil
+}
+
 func Build8EPacket(timestamp uint64) ([]byte, error) {
 	payload := bytes.NewBuffer(nil)
 

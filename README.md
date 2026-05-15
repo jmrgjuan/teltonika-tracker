@@ -5,15 +5,56 @@ This program performs the initial communication of a Teltonika device: TCP conne
 
 ## Getting started
 
-This repository contains a Go executable that connects to a TCP server and keeps the connection open.
+This repository contains two Go programs:
 
-### Useful commands
+- client: `main.go`
+- server: `cmd/server/main.go`
 
-- `go run main.go` — run the program directly
-- `go build -o bin/teltonika-tracker main.go` — build the executable
-- `./bin/teltonika-tracker` — run the compiled binary
+The client connects to a Teltonika-compatible server, sends an IMEI login, receives an ACK, and then sends periodic 8E packets.
+The server accepts connections, reads the IMEI login, sends an ACK byte, and receives 8E packets.
 
-### Available options
+## Build locally
+
+Build the client binary:
+
+```bash
+go build -o bin/teltonika-tracker main.go
+```
+
+Build the server binary:
+
+```bash
+go build -o bin/teltonika-server ./cmd/server
+```
+
+Run local tests:
+
+```bash
+go test ./...
+```
+
+## Run locally
+
+### Start the server
+
+```bash
+./bin/teltonika-server \
+  -listen-ip 0.0.0.0 \
+  -listen-port 5000
+```
+
+### Start the client
+
+```bash
+./bin/teltonika-tracker \
+  -server-ip 127.0.0.1 \
+  -server-port 5000 \
+  -imei 123456789012345 \
+  -interval-8e 10 \
+  -timeout-response 2
+```
+
+## Client flags
 
 - `-server-ip` — server IP (required)
 - `-server-port` — server port (required)
@@ -24,48 +65,10 @@ This repository contains a Go executable that connects to a TCP server and keeps
 - `-sleep-retry` — seconds between connection retries (default: `2`)
 - `-sleep-noconnect` — seconds to wait if retries are exhausted (default: `30`)
 
-## Execution examples
+## Server flags
 
-Run with default values:
-
-```bash
-go run main.go
-```
-
-Run against a local server on port 5000 with a custom IMEI:
-
-```bash
-go run main.go \
-  -server-ip 127.0.0.1 \
-  -server-port 5000 \
-  -imei 123456789012345
-```
-
-Build and run the binary:
-
-```bash
-go build -o bin/teltonika-tracker main.go
-./bin/teltonika-tracker -server-ip 192.168.1.10 -server-port 5000 -imei 123456789012345
-```
-
-Increase retries and decrease retry interval:
-
-```bash
-go run main.go \
-  -retry-connect 5 \
-  -sleep-retry 1
-```
-
-Run with a 10-second 8E send interval and a 2-second server response timeout:
-
-```bash
-go run main.go \
-  -server-ip 127.0.0.1 \
-  -server-port 5000 \
-  -imei 123456789012345 \
-  -interval-8e 10 \
-  -timeout-response 2
-```
+- `-listen-ip` — IP address to listen on (default: `0.0.0.0`)
+- `-listen-port` — port to listen on (default: `5000`)
 
 ## Docker
 
@@ -75,7 +78,15 @@ Build the Docker image from the repository root:
 docker build -t teltonika-tracker .
 ```
 
-Run the container with required flags:
+### Run the server in Docker
+
+```bash
+docker run --rm teltonika-tracker /teltonika-server \
+  -listen-ip 0.0.0.0 \
+  -listen-port 5000
+```
+
+### Run the client in Docker
 
 ```bash
 docker run --rm teltonika-tracker \
@@ -86,7 +97,7 @@ docker run --rm teltonika-tracker \
   -timeout-response 2
 ```
 
-If the server is running on the Docker host, use host networking:
+If the server is on the Docker host, use host networking for the client:
 
 ```bash
 docker run --rm --network host teltonika-tracker \
