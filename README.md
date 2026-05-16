@@ -107,3 +107,44 @@ docker run --rm --network host teltonika-tracker \
   -interval-8e 10 \
   -timeout-response 2
 ```
+
+## InfluxDB + Grafana (docker-compose)
+
+This repository includes a `docker-compose.yml` that starts an InfluxDB 2.x instance and Grafana. Use it to collect and visualize tracker telemetry.
+
+1. Start services:
+
+```bash
+docker-compose up -d
+```
+
+2. Export Influx connection variables so the server can write points (example values match `docker-compose.yml`):
+
+```bash
+export INFLUX_URL=http://localhost:8086
+export INFLUX_TOKEN=my-token
+export INFLUX_ORG=my-org
+export INFLUX_BUCKET=teltonika
+```
+
+3. Build and run the server (it will initialize the Influx client from the env variables):
+
+```bash
+go build -o bin/teltonika-server ./cmd/server
+./bin/teltonika-server --listen-port 5000
+```
+
+4. Start one or more simulators (client) to send data to the server:
+
+```bash
+go build -o bin/teltonika-tracker main.go
+./bin/teltonika-tracker -server-ip 127.0.0.1 -server-port 5000 -imei 123456789012345
+```
+
+5. Verify data:
+- Influx UI: http://localhost:8086 (use the credentials from `docker-compose.yml` to log in during initial setup)
+- Grafana: http://localhost:3000 (Grafana is started but dashboard provisioning is left for later)
+
+Notes:
+- The server writes measurement `teltonika` with tag `imei` and fields `lat`, `lon`, `alt`, `speed`.
+- If you prefer to containerize the server and client, I can add `Dockerfile` entries and include them as services in `docker-compose.yml`.

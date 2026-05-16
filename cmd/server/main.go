@@ -9,6 +9,20 @@ import (
 	"time"
 
 	"github.com/jmrgjuan/teltonika-tracker/protocol"
+	"github.com/jmrgjuan/teltonika-tracker/storage"
+)
+
+type packetTask struct {
+	Remote     string
+	IMEI       string
+	Packet     *protocol.Codec8EPacket
+	ReceivedAt time.Time
+}
+
+var (
+	taskQueue   chan packetTask
+	workerCount = 4
+	queueSize   = 200
 )
 
 func main() {
@@ -26,6 +40,18 @@ func main() {
 		log.Fatalf("[FATAL] Failed to listen on %s: %v", address, err)
 	}
 	defer listener.Close()
+
+	// initialize Influx (if env present)
+	if err := storage.InitFromEnv(); err != nil {
+		log.Printf("[WARN] failed to initialize influx: %v", err)
+	}
+	defer storage.Close()
+
+	// start async processing queue
+	taskQueue = make(chan packetTask, queueSize)
+	for i := 0; i < workerCount; i++ {
+		go worker(i, taskQueue)
+	}
 
 	log.Printf("[INFO] Server listening on %s", address)
 
@@ -69,7 +95,23 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		log.Printf("[INFO] Received 8E packet from %s: payload size=%d, codec=0x%X", remote, len(packet), packet[0])
+		// enqueue packet for asynchronous processing to avoid blocking the connection
+		task := packetTask{
+			Remote:     remote,
+			IMEI:       imei,
+			Packet:     packet,
+			ReceivedAt: time.Now(),
+		}
+		select {
+		case taskQueue <- task:
+			// enqueued successfully
+		default:
+			// queue full — spawn a goroutine to enqueue so we don't block the connection
+			go func(t packetTask) {
+				taskQueue <- t
+			}(task)
+			log.Printf("[WARN] task queue full, enqueuing in background for %s", remote)
+		}
 
 		if _, err := conn.Write([]byte{0x01}); err != nil {
 			log.Printf("[ERROR] Failed to send packet response to %s: %v", remote, err)
@@ -79,6 +121,33 @@ func handleConnection(conn net.Conn) {
 
 		if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
 			log.Printf("[WARN] Failed to update read deadline for %s: %v", remote, err)
+		}
+	}
+}
+
+func worker(id int, q <-chan packetTask) {
+	log.Printf("[INFO] worker %d started", id)
+	for task := range q {
+		remote := task.Remote
+		packet := task.Packet
+		log.Printf("[INFO] [worker-%d] Processing packet from %s: codec=0x%X, records=%d (recv=%s)", id, remote, packet.CodecID, len(packet.Records), task.ReceivedAt.Format(time.RFC3339))
+		for idx, record := range packet.Records {
+			log.Printf("[DEBUG] [worker-%d] %s IMEI=%s Record %d: ts=%d priority=%d lon=%.7f lat=%.7f alt=%d speed=%d io_bytes=%d",
+				id,
+				remote,
+				task.IMEI,
+				idx,
+				record.Timestamp,
+				record.Priority,
+				protocol.Int32ToDegrees(record.Longitude),
+				protocol.Int32ToDegrees(record.Latitude),
+				record.Altitude,
+				record.Speed,
+				len(record.IOData))
+
+			if err := storage.WriteRecord(task.IMEI, record); err != nil {
+				log.Printf("[ERROR] [worker-%d] failed writing to influx for %s: %v", id, task.IMEI, err)
+			}
 		}
 	}
 }
