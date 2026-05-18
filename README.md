@@ -110,15 +110,47 @@ docker run --rm --network host teltonika-tracker \
 
 ## InfluxDB + Grafana (docker-compose)
 
-This repository includes a `docker-compose.yml` that starts an InfluxDB 2.x instance and Grafana. Use it to collect and visualize tracker telemetry.
+This repository includes a `docker-compose.yml` that starts InfluxDB 2 and Grafana. Use it to collect and visualize tracker telemetry. All services are automatically configured and run together.
 
-1. Start services:
+### Option A: Run everything with docker-compose (recommended for demos)
+
+1. Start all services (InfluxDB, Grafana, server, and tracker):
 
 ```bash
 docker-compose up -d
 ```
 
-2. Export Influx connection variables so the server can write points (example values match `docker-compose.yml`):
+This will:
+- Build and start the `influxdb` service (initializes bucket `teltonika`, token `my-token`)
+- Build and start the `grafana` service
+- Build and start the `server` service (connects to InfluxDB via the internal compose network)
+- Build and start the `tracker` service (sends 1 simulated device by default; change `NUM_DEVICES` in `docker-compose.yml`)
+
+2. Verify data:
+- Influx UI: http://localhost:8086 (token: `my-token`, org: `my-org`, bucket: `teltonika`)
+- Grafana: http://localhost:3000 (admin password: `admin`)
+
+To modify device count or IMEI, edit the `tracker` service environment in `docker-compose.yml`:
+```yaml
+environment:
+  - IMEI=123456789012345
+  - NUM_DEVICES=5  # Change to simulate multiple devices
+```
+
+Then restart:
+```bash
+docker-compose up -d --build
+```
+
+### Option B: Run server locally, use InfluxDB + Grafana from docker-compose
+
+1. Start only InfluxDB and Grafana:
+
+```bash
+docker-compose up -d influxdb grafana
+```
+
+2. Export Influx connection variables (using `localhost` since running from host):
 
 ```bash
 export INFLUX_URL=http://localhost:8086
@@ -127,7 +159,7 @@ export INFLUX_ORG=my-org
 export INFLUX_BUCKET=teltonika
 ```
 
-3. Build and run the server (it will initialize the Influx client from the env variables):
+3. Build and run the server locally:
 
 ```bash
 go build -o bin/teltonika-server ./cmd/server
@@ -138,13 +170,15 @@ go build -o bin/teltonika-server ./cmd/server
 
 ```bash
 go build -o bin/teltonika-tracker main.go
-./bin/teltonika-tracker -server-ip 127.0.0.1 -server-port 5000 -imei 123456789012345
+./bin/teltonika-tracker -server-ip 127.0.0.1 -server-port 5000 -imei 123456789012345 -num-devices 1
 ```
 
 5. Verify data:
-- Influx UI: http://localhost:8086 (use the credentials from `docker-compose.yml` to log in during initial setup)
-- Grafana: http://localhost:3000 (Grafana is started but dashboard provisioning is left for later)
+- Influx UI: http://localhost:8086
+- Grafana: http://localhost:3000
 
-Notes:
+### Notes
+
 - The server writes measurement `teltonika` with tag `imei` and fields `lat`, `lon`, `alt`, `speed`.
-- If you prefer to containerize the server and client, I can add `Dockerfile` entries and include them as services in `docker-compose.yml`.
+- When running with docker-compose, use `INFLUX_URL=http://influxdb:8086` (service name) inside containers.
+- When running locally, use `INFLUX_URL=http://localhost:8086`.
