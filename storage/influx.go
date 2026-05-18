@@ -35,22 +35,34 @@ func InitFromEnv() error {
 		return nil
 	}
 
-	client = influxdb2.NewClient(url, token)
-	writeAPI = client.WriteAPIBlocking(org, bucket)
-	enabled = true
+	// Retry logic for connection
+	maxRetries := 15
+	retryInterval := 2 * time.Second
 
-	// Simple health check
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := client.Ready(ctx)
-	if err != nil {
+	var err error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		client = influxdb2.NewClient(url, token)
+		writeAPI = client.WriteAPIBlocking(org, bucket)
+
+		// Simple health check
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err = client.Ready(ctx)
+		cancel()
+
+		if err == nil {
+			enabled = true
+			log.Printf("[INFO] InfluxDB client initialized (org=%s bucket=%s url=%s)", org, bucket, url)
+			return nil
+		}
+
+		log.Printf("[WARN] InfluxDB connection failed (attempt %d/%d): %v, retrying in %v...", attempt, maxRetries, err, retryInterval)
 		client.Close()
-		enabled = false
-		return fmt.Errorf("influx not ready: %w", err)
+		time.Sleep(retryInterval)
 	}
 
-	log.Printf("[INFO] InfluxDB client initialized (org=%s bucket=%s url=%s)", org, bucket, url)
-	return nil
+	log.Printf("[ERROR] Failed to initialize InfluxDB after %d attempts: %v", maxRetries, err)
+	enabled = false
+	return fmt.Errorf("influx not ready after retries: %w", err)
 }
 
 // Close closes the underlying InfluxDB client.
@@ -79,5 +91,10 @@ func WriteRecord(imei string, record protocol.Codec8ERecord) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return writeAPI.WritePoint(ctx, p)
-}
+	err := writeAPI.WritePoint(ctx, p)
+	if err != nil {
+		log.Printf("[ERROR] Failed to write point to InfluxDB: %v", err)
+		return err
+	}
+	log.Printf("[DEBUG] Written point to InfluxDB: imei=%s lat=%.7f lon=%.7f", imei, protocol.Int32ToDegrees(record.Latitude), protocol.Int32ToDegrees(record.Longitude))
+	return nil

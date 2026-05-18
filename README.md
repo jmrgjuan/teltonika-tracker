@@ -120,26 +120,69 @@ This repository includes a `docker-compose.yml` that starts InfluxDB 2 and Grafa
 docker-compose up -d
 ```
 
-This will:
-- Build and start the `influxdb` service (initializes bucket `teltonika`, token `my-token`)
-- Build and start the `grafana` service
-- Build and start the `server` service (connects to InfluxDB via the internal compose network)
-- Build and start the `tracker` service (sends 1 simulated device by default; change `NUM_DEVICES` in `docker-compose.yml`)
+This will build and start:
+- `influxdb` (port 8086) — initializes bucket `teltonika`, token `my-token`, org `my-org`
+- `grafana` (port 3000) — admin dashboard
+- `server` (port 5000) — TCP server that writes to InfluxDB
+- `tracker` (no exposed port) — simulated device sending data to server
 
-2. Verify data:
-- Influx UI: http://localhost:8086 (token: `my-token`, org: `my-org`, bucket: `teltonika`)
-- Grafana: http://localhost:3000 (admin password: `admin`)
+2. Wait for services to fully initialize (~10-15 seconds):
 
-To modify device count or IMEI, edit the `tracker` service environment in `docker-compose.yml`:
-```yaml
-environment:
-  - IMEI=123456789012345
-  - NUM_DEVICES=5  # Change to simulate multiple devices
+```bash
+docker-compose ps
 ```
 
-Then restart:
+All services should show `Up`. If any show `Exited`, check logs:
+
+```bash
+docker-compose logs server
+docker-compose logs tracker
+docker-compose logs influxdb
+```
+
+3. Access InfluxDB UI at **http://localhost:8086**:
+   - **Username**: `admin`
+   - **Password**: `adminpass`
+   - **Organization**: `my-org`
+   - **Token**: `my-token`
+
+   The bucket `teltonika` is pre-created and should already contain data from the tracker.
+
+4. Verify data is being recorded:
+   - In InfluxDB UI: go to **Data Explorer** → select bucket `teltonika` → run query
+   - You should see measurement `teltonika` with records tagged by `imei` and fields `lat`, `lon`, `alt`, `speed`
+
+5. Access Grafana at **http://localhost:3000**:
+   - **Username**: `admin`
+   - **Password**: `admin`
+
+   (Dashboard provisioning is left for manual setup later)
+
+6. To modify device count or IMEI, edit `docker-compose.yml`:
+
+```yaml
+tracker:
+  environment:
+    - IMEI=123456789012345
+    - NUM_DEVICES=5  # Change this to simulate multiple devices
+```
+
+Then rebuild and restart:
+
 ```bash
 docker-compose up -d --build
+```
+
+7. To stop all services:
+
+```bash
+docker-compose down
+```
+
+To stop and remove volumes (resets InfluxDB data):
+
+```bash
+docker-compose down -v
 ```
 
 ### Option B: Run server locally, use InfluxDB + Grafana from docker-compose
@@ -182,3 +225,76 @@ go build -o bin/teltonika-tracker main.go
 - The server writes measurement `teltonika` with tag `imei` and fields `lat`, `lon`, `alt`, `speed`.
 - When running with docker-compose, use `INFLUX_URL=http://influxdb:8086` (service name) inside containers.
 - When running locally, use `INFLUX_URL=http://localhost:8086`.
+
+## Querying Data
+
+### InfluxDB UI (Data Explorer)
+
+1. Go to **http://localhost:8086** and log in
+2. Click **Data Explorer** (left sidebar)
+3. Select bucket `teltonika`
+4. The UI shows:
+   - **Measurements**: `teltonika`
+   - **Fields**: `lat`, `lon`, `alt`, `speed`
+   - **Tags**: `imei`
+
+5. Quick example query (click **Script Editor** for advanced):
+   ```flux
+   from(bucket: "teltonika")
+     |> range(start: -1h)
+     |> filter(fn: (r) => r._measurement == "teltonika")
+     |> filter(fn: (r) => r.imei == "123456789012345")
+   ```
+
+6. Click **Submit** to see data
+
+### Grafana Dashboard
+
+1. Go to **http://localhost:3000** and log in (admin/admin)
+2. **Add Data Source**:
+   - Click **Configuration** (gear icon) → **Data Sources**
+   - Click **Add data source**
+   - Select **InfluxDB**
+   - Configure:
+     - **URL**: `http://influxdb:8086`
+     - **Organization**: `my-org`
+     - **Token**: `my-token`
+     - **Default Bucket**: `teltonika`
+   - Click **Save & Test**
+
+3. **Create a new Dashboard**:
+   - Click **+** → **Dashboard**
+   - Click **Add new panel**
+   - In **Query** section, select your InfluxDB data source
+   - Example Flux query to show latest coordinates by IMEI:
+     ```flux
+     from(bucket: "teltonika")
+       |> range(start: -1h)
+       |> filter(fn: (r) => r._measurement == "teltonika")
+       |> last()
+     ```
+   - Choose visualization (e.g., **Graph**, **Table**, **Stat**)
+   - Click **Save**
+
+4. **Example panel ideas**:
+   - **Map**: Plot `lat`/`lon` on a map (use Grafana's native map or external plugin)
+   - **Graph**: Show `speed` over time
+   - **Table**: Display all records with `imei`, `lat`, `lon`, `alt`, `speed`
+   - **Stat**: Show latest GPS coordinates per device
+
+### CLI Query (optional)
+
+If you prefer to query InfluxDB from terminal, use `influx` CLI inside the container:
+
+```bash
+docker exec teltonika-influxdb influx query 'from(bucket: "teltonika") |> range(start: -1h)'
+```
+
+Or with authentication:
+
+```bash
+docker exec teltonika-influxdb influx query \
+  --org my-org \
+  --token my-token \
+  'from(bucket: "teltonika") |> range(start: -1h) |> filter(fn: (r) => r._measurement == "teltonika")'
+```

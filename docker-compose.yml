@@ -14,6 +14,11 @@ services:
       - INFLUXDB_INIT_ADMIN_TOKEN=my-token
     volumes:
       - influxdb-data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   grafana:
     image: grafana/grafana:main-slim
