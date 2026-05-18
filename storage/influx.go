@@ -78,8 +78,8 @@ func WriteRecord(imei string, record protocol.Codec8ERecord) error {
 		return nil
 	}
 
-	// convert timestamp (assume milliseconds since epoch)
-	t := time.Unix(0, int64(record.Timestamp)*int64(time.Millisecond))
+	// convert timestamp (record.Timestamp is in seconds since epoch)
+	t := time.Unix(int64(record.Timestamp), 0)
 
 	p := influxdb2.NewPointWithMeasurement("teltonika").
 		AddTag("imei", imei).
